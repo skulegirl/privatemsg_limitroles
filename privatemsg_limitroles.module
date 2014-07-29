@@ -14,7 +14,7 @@
  */
 function privatemsg_limitroles_menu() {
   $items = array();
-  $items['admin/settings/messages/limitroles'] = array(
+  $items['admin/config/messaging/privatemsg/limitroles'] = array(
     'title' => 'Limit roles',
     'description' => 'Configure limit roles settings.',
     'page callback' => 'drupal_get_form',
@@ -28,63 +28,23 @@ function privatemsg_limitroles_menu() {
 /**
  * Build the settings form.
  */
-function privatemsg_limitroles_form_settings() {
-  $defaults = variable_get('privatemsg_limitroles', array(array()));
+function privatemsg_limitroles_form_settings($form, &$form_state) {
   $roles_from = user_roles();
   $roles_to = user_roles(TRUE);
-  $form['privatemsg_limitroles']['#tree'] = TRUE;
+  foreach ($roles_to as $rid_to => $role_to) {
+    $options[$rid_to] = $role_to;
+  }
   foreach ($roles_from as $rid_from => $role_from) {
-    $form['#privatemsg_limitroles'][$rid_from] = $role_from;
-    foreach ($roles_to as $rid_to => $role_to) {
-      $form['privatemsg_limitroles'][$rid_from][$rid_to] = array(
-        '#type' => 'checkbox',
-        '#default_value' => !empty($defaults[$rid_from][$rid_to]),
-      );
-    }
+    $varname = 'privatemsg_limitroles_from_' . $rid_from;
+    $form[$varname] = array (
+      '#type' => 'checkboxes',
+      '#title' => 'Messages can be sent from ' .$role_from . ' to:',
+      '#options' => $options,
+      '#default_value' => variable_get($varname, array()),
+      '#attributes' => array('class' => array('rid-' . $rid_from)),
+    );
   }
-  $form['buttons']['submit'] = array(
-    '#type' => 'submit',
-    '#value' => t('Save'),
-  );
-  return $form;
-}
-
-/**
- * Store settings to DB.
- */
-function privatemsg_limitroles_form_settings_submit($form, &$form_state) {
-  foreach ($form_state['values']['privatemsg_limitroles'] as $rid_from => $values_from) {
-    $form_state['values']['privatemsg_limitroles'][$rid_from] = array_filter($values_from);
-  }
-  $form_state['values']['privatemsg_limitroles'] = array_filter($form_state['values']['privatemsg_limitroles']);
-  variable_set('privatemsg_limitroles', $form_state['values']['privatemsg_limitroles']);
-}
-
-/**
- * Implementation of hook_theme().
- */
-function privatemsg_limitroles_theme() {
-  return array(
-    'privatemsg_limitroles_form_settings' => array(
-      'arguments' => array('form' => array()),
-    ),
-  );
-}
-
-/**
- * Theme function for settings form.
- */
-function theme_privatemsg_limitroles_form_settings($form) {
-  $header = array(0 => FALSE);
-  $rows = array();
-  foreach (element_children($form['privatemsg_limitroles']) as $rid_from) {
-    $rows[$rid_from] = array(check_plain($form['#privatemsg_limitroles'][$rid_from]));
-    foreach (element_children($form['privatemsg_limitroles'][$rid_from]) as $rid_to) {
-      $header[$rid_to] = check_plain($form['#privatemsg_limitroles'][$rid_to]);
-      $rows[$rid_from][$rid_to] = drupal_render($form['privatemsg_limitroles'][$rid_from][$rid_to]);
-    }
-  }
-  return theme('table', $header, $rows) . drupal_render($form);
+  return system_settings_form($form);
 }
 
 /**
@@ -96,8 +56,9 @@ function privatemsg_limitroles_privatemsg_name_lookup($string) {
   // _privatemsg_parse_userstring() seems to be the best approach to follow,
   // but it's way too much easier by utilizing some form_alter() magic.
   $roles = _privatemsg_limitroles_may_send_to();
-  $result = db_query("SELECT * FROM {users} u INNER JOIN {users_roles} ur ON (ur.uid = u.uid) WHERE name = '%s' AND ur.rid IN (%s)", $string, implode(',', $roles));
-  if ($account = db_fetch_object($result)) {
+  $result = db_query("SELECT * FROM {users} u INNER JOIN {users_roles} ur ON (ur.uid = u.uid) WHERE name = :name AND ur.rid IN (:role_ids)", array(':name' => $string, ':role_ids' => $roles));
+  foreach ($result as $account) {
+    // just return the first one
     return $account;
   }
   return FALSE;
@@ -106,28 +67,27 @@ function privatemsg_limitroles_privatemsg_name_lookup($string) {
 /**
  * Implementation of hook_privatemsg_sql_autocomplete_alter().
  */
-function privatemsg_limitroles_privatemsg_sql_autocomplete_alter(&$fragments, $search, $names) {
+function privatemsg_limitroles_query_privatemsg_autocomplete_alter($query) {
   $roles = _privatemsg_limitroles_may_send_to();
   if (isset($roles[DRUPAL_AUTHENTICATED_RID])) {
     // If $user may send private msgs to authenticated users, then s/he can
     // send to anybody - so no limiting is needed.
     return;
   }
-  $fragments['inner_join'][] = 'INNER JOIN {users_roles} ur ON (ur.uid = u.uid)';
-  $fragments['where'][] = 'ur.rid IN (%s)';
-  $fragments['query_args']['where'][] = implode(',', $roles);
+  $query->innerJoin('users_roles', 'ur', 'ur.uid = u.uid');
+  dd($roles);
+  $query->condition('ur.rid', $roles, 'IN');
 }
 
 function _privatemsg_limitroles_may_send_to() {
-  $settings = variable_get('privatemsg_limitroles', array(array()));
   global $user;
   $roles = array(0 => 0);
   foreach ($user->roles as $rid => $role) {
-    if (!is_array($settings[$rid])) {
-      continue;
-    }
-    foreach ($settings[$rid] as $rid_to => $value) {
-      $roles[$rid_to] = $rid_to;
+    $varname = 'privatemsg_limitroles_from_' . $rid;
+    $settings = variable_get($varname, array());
+    // array_filter only leaves the non-zero entries
+    foreach (array_filter($settings) as $rid_to => $value) {
+        $roles[$rid_to] = $rid_to;
     }
   }
   return $roles;
@@ -157,7 +117,7 @@ function privatemsg_limitroles_form_privatemsg_new_alter_recipient_validate($ele
       return;
     }
     foreach ($usernames as $username) {
-      if ($account = user_load(array('name' => $username))) {
+      if ($account = user_load_by_name($username)) {
         $allowed = FALSE;
         foreach ($account->roles as $rid => $role) {
           if (isset($roles[$rid])) {
@@ -166,7 +126,7 @@ function privatemsg_limitroles_form_privatemsg_new_alter_recipient_validate($ele
           }
         }
         if (!$allowed) {
-          form_set_error('recipient', t('Sending message to !name is not allowed. The user\'s account is either expired or not fully activated.', array('!name' => theme('username', $account))));
+          form_set_error('recipient', t('Sending message to @name is not allowed. The user\'s account is either expired or not fully activated.', array('@name' => format_username($account))));
         }
       }
     }
