@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * @file
+ * Allows to limit sending messages from/to role members.
+ *
+ * @author
+ * Boobaa - http://drupal.org/user/199303
+ */
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function privatemsg_limitroles_uninstall() {
+	  variable_del('privatemsg_limitroles');
+}
+	
