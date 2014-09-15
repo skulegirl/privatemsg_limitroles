@@ -75,7 +75,6 @@ function privatemsg_limitroles_query_privatemsg_autocomplete_alter($query) {
     return;
   }
   $query->innerJoin('users_roles', 'ur', 'ur.uid = u.uid');
-  dd($roles);
   $query->condition('ur.rid', $roles, 'IN');
 }
 
